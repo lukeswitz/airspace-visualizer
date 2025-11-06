@@ -136,30 +136,35 @@ def file_listener():
     while True:
         try:
             if os.path.exists(aircraft_file):
-                # Check if file has been modified
                 current_mtime = os.path.getmtime(aircraft_file)
-                
                 if current_mtime != last_mtime:
-                    with open(aircraft_file, 'r') as f:
-                        aircraft_json = json.load(f)
-                        latest_aircraft_data = aircraft_json
-                        
-                    aircraft_count = len(aircraft_json.get('aircraft', []))
+                    # Skip empty/partial writes
+                    if os.path.getsize(aircraft_file) == 0:
+                        last_mtime = current_mtime
+                        time.sleep(0.1)
+                        continue
+                    with open(aircraft_file, "r") as f:
+                        try:
+                            aircraft_json = json.load(f)
+                        except json.JSONDecodeError:
+                            # Likely partial write; retry on next tick
+                            time.sleep(0.2)
+                            last_mtime = current_mtime
+                            continue
+                    latest_aircraft_data = aircraft_json
+                    aircraft_count = len(aircraft_json.get("aircraft", []))
                     if aircraft_count > 0:
                         print(f"📡 FILE: Read {aircraft_count} aircraft from {aircraft_file}")
-                    
                     last_mtime = current_mtime
             else:
-                if last_mtime != 0:  # Only warn once
+                if last_mtime != 0:
                     print(f"⚠️ Aircraft file not found: {aircraft_file}")
                     last_mtime = 0
-                    
-        except json.JSONDecodeError as e:
-            print(f"❌ Aircraft JSON decode error: {e}")
         except Exception as e:
             print(f"❌ Aircraft file read error: {e}")
             
-        time.sleep(1)  # Check file every second
+        time.sleep(1)
+
 
 def transform_acars_to_vdl2(acars_data):
     """Transform ACARS message to VDL2 format expected by radar app"""
@@ -342,20 +347,27 @@ def get_adsb_status():
 def get_vdl2():
     """Serve latest VDL2 message (dumpvdl2 compatible)"""
     try:
-        # Try to read from file first (if using file-based simulator)
         vdl2_file_path = '/tmp/vdl2.json'
         if os.path.exists(vdl2_file_path):
+            # dumpvdl2 writes NDJSON (one JSON object per line). Read last non-empty line.
+            last = None
             with open(vdl2_file_path, 'r') as f:
-                file_data = json.load(f)
-                if file_data and 'vdl2' in file_data:
-                    print(f"📻 Serving VDL2 from file: {vdl2_file_path}")
-                    return jsonify(file_data)
-        
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        last = line
+            if last:
+                try:
+                    file_data = json.loads(last)
+                    if file_data and 'vdl2' in file_data:
+                        return jsonify(file_data)
+                except json.JSONDecodeError:
+                    pass
+                    
         # Fall back to in-memory message
         if latest_vdl2_message:
             return jsonify(latest_vdl2_message)
         else:
-            # Return empty VDL2 structure if no messages
             return jsonify({
                 "vdl2": {
                     "app": {"name": "simulated_dumpvdl2", "ver": "2.3.0"},
@@ -434,13 +446,13 @@ def main():
     time.sleep(1)
     
     print("✅ ADS-B Server (dump1090 compatible): http://localhost:8080")
-    print("   📊 Aircraft data: http://localhost:8080/data/aircraft.json")
+    print("   📊 Aircraft data: http://localhost:8080/tmp/aircraft.json")
     print("   📈 Status: http://localhost:8080/status")
     print("   📡 UDP Input: port 30005")
     print()
     print("✅ ACARS/VDL2 Server (dumpvdl2 compatible): http://localhost:8081")
-    print("   📻 VDL2 data: http://localhost:8081/data/vdl2.json")
-    print("   📋 All ACARS: http://localhost:8081/data/acars.json")
+    print("   📻 VDL2 data: http://localhost:8081/tmp/vdl2.json")
+    print("   📋 All ACARS: http://localhost:8081/tmp/acars.json")
     print("   📈 Status: http://localhost:8081/status")
     print("   📡 UDP Input: port 5555")
     print("=" * 60)
@@ -459,3 +471,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
