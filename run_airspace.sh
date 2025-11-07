@@ -210,8 +210,10 @@ vdl2_cmd() {
     echo ""
     return
   fi
-  
+  # // 131.525 131.725 131.825 130.450 130.825 131.550 for most airports, use 136 for delta/southwest hubs
   if [[ -n "${DUMPVDL2_BIN}" ]]; then
+    # echo "acarsdec -A -e --output json:file:path=$VDL2_NDJSON --rtlsdr $vdl_idx -g 36.4 131.525 131.725 131.825 130.450 130.825 131.550"
+    # echo "${DUMPVDL2_BIN} --rtlsdr ${vdl_idx} --gain 49.6 131525000 131550000 131725000 131825000 --output decoded:json:file:path=${VDL2_NDJSON}"
     echo "${DUMPVDL2_BIN} --rtlsdr ${vdl_idx} --gain 49.6 136650000 136725000 136775000 136800000 136825000 136875000 136900000 136975000 --output decoded:json:file:path=${VDL2_NDJSON}"
   else
     echo ""
@@ -308,20 +310,34 @@ start_all() {
     fi
   fi
 
-  # Start AI server if available
+  # Start AI server if available (fix: prevent multiple instances)
   if [[ -f "${AI_SERVER}" ]]; then
+    # Kill any existing AI server processes first
     pkill -9 -f "ai_server.py" 2>/dev/null || true
     sleep 1
-    echo "Starting AI server: ${PY_BIN} ${AI_SERVER}"
-    start_proc "${PY_BIN} \"${AI_SERVER}\"" "${AI_SERVER_PID}" "${LOG_DIR}/ai_server.log"
-    sleep 1
+    
+    # Only start if not already running on port 11435
+    if ! curl -s http://localhost:11435/ &>/dev/null; then
+      echo "Starting AI server: ${PY_BIN} ${AI_SERVER}"
+      start_proc "${PY_BIN} ${AI_SERVER}" "${AI_SERVER_PID}" "${LOG_DIR}/ai_server.log"
+      sleep 2
+      
+      # Verify it started
+      if curl -s http://localhost:11435/ &>/dev/null; then
+        echo "✅ AI server started successfully"
+      else
+        echo "⚠️  AI server failed to start - check ${LOG_DIR}/ai_server.log"
+      fi
+    else
+      echo "✅ AI server already running"
+    fi
   else
     echo "⚠️  AI server not found at ${AI_SERVER}"
   fi
 
   # start bridge
   echo "Starting bridge: ${PY_BIN} ${PY_BRIDGE}"
-  start_proc "${PY_BIN} \"${PY_BRIDGE}\"" "${BRIDGE_PID}" "${LOG_DIR}/bridge.log"
+  start_proc "${PY_BIN} ${PY_BRIDGE}" "${BRIDGE_PID}" "${LOG_DIR}/bridge.log"
   sleep 0.2
 
   # start web server
