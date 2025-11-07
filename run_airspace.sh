@@ -45,7 +45,7 @@ find_device_by_serial() {
   rtl_test -t 2>&1 | grep -B1 "SN: ${serial}" | grep -oP '^\s+\K[0-9]+(?=:)' | head -1
 }
 
-aadsb_cmd() {
+adsb_cmd() {
   local adsb_idx="1"
   
   if [[ -n "${READSB_BIN}" ]]; then
@@ -65,11 +65,12 @@ vdl2_cmd() {
   local vdl_idx="0"
   
   if [[ -n "${DUMPVDL2_BIN}" ]]; then
-    echo "${DUMPVDL2_BIN} --rtlsdr ${vdl_idx} --gain 49.6 136650000 136725000 136775000 136800000 136825000 136875000 136900000 136975000 --output decoded:json:file:path=\"${VDL2_NDJSON}\""
+    echo "${DUMPVDL2_BIN} --rtlsdr ${vdl_idx} --gain 49.6 136650000 136725000 136775000 136800000 136825000 136875000 136900000 136975000 --output decoded:json:file:path=${VDL2_NDJSON}"
   else
     echo ""
   fi
 }
+
 is_running() {
   local pidf="$1"
   [[ -f "${pidf}" ]] && kill -0 "$(cat "${pidf}")" 2>/dev/null
