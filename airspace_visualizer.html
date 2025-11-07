@@ -99,6 +99,10 @@
             margin: 5px 0;
         }
 
+        #aircraftDetailsBox button {
+            pointer-events: auto;
+        }
+
         .status-item {
             font-size: 11px;
             margin: 2px 0;
@@ -171,8 +175,61 @@
             color: #ffaa00;
         }
 
+        .acars-msg-item {
+            background: #1a1a00;
+            border: 1px solid #664400;
+            border-left: 3px solid #ffaa00;
+            padding: 10px;
+            margin: 10px 0;
+        }
+
+        .acars-msg-header {
+            font-weight: bold;
+            color: #ffcc00;
+            margin-bottom: 5px;
+        }
+
+        .acars-msg-meta {
+            font-size: 10px;
+            color: #aa8800;
+            margin-bottom: 5px;
+        }
+
+        .acars-msg-text {
+            color: #ffaa00;
+            padding-left: 10px;
+            border-left: 2px solid #664400;
+            margin-top: 5px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
         .log-entry.vdl2 {
-            color: #ff9900;
+            background: #1a1a00;
+            border: 1px solid #664400;
+            border-left: 3px solid #ffaa00;
+            padding: 8px;
+            margin: 6px 0;
+        }
+
+        .vdl2-header {
+            font-weight: bold;
+            color: #ffcc00;
+            margin-bottom: 4px;
+        }
+
+        .vdl2-meta {
+            font-size: 10px;
+            color: #aa8800;
+            margin-bottom: 4px;
+        }
+
+        .vdl2-message {
+            color: #ffaa00;
+            font-size: 11px;
+            padding-left: 10px;
+            border-left: 2px solid #664400;
+            margin-top: 4px;
         }
 
         .log-entry.correlation {
@@ -381,6 +438,7 @@
                     <div class="detail-item"><strong>SOG:</strong> <span id="detailSOG"></span></div>
                     <div class="detail-item"><strong>HDG:</strong> <span id="detailHDG"></span></div>
                     <div class="detail-item"><strong>ACARS:</strong> <span id="detailACARSActivity"></span></div>
+                    <button id="viewACARSBtn" onclick="event.stopPropagation(); showACARSMessages(this.dataset.hex)" style="width: 100%; margin-top: 5px; padding: 5px; background: #4f4f0f; color: #ffaa00; border: 1px solid #ffaa00; cursor: pointer; font-family: 'Courier New', monospace;">View ACARS Messages</button>
                 </div>
             </div>
         </div>
@@ -416,6 +474,18 @@
             <input type="text" id="aiInput" class="ai-input" placeholder="Ask AI about radar contacts, routes, ACARS messages...">
             <button id="aiSend" class="ai-send">Send</button>
             <span style="margin-left: 10px; font-size: 11px;">💡 Assistant ready to analyze radar data and ACARS communications.</span>
+        </div>
+    </div>
+
+     <!-- ACARS Message Viewer Modal -->
+    <div id="acarsModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; pointer-events: auto;">
+        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 80%; max-width: 900px; max-height: 80%; background: #000; border: 2px solid #0f8f0f; padding: 20px; overflow-y: auto; pointer-events: auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 2px solid #0f8f0f; padding-bottom: 10px;">
+                <h3 style="margin: 0; color: #ffaa00;">📻 ACARS Messages - <span id="modalAircraftId"></span></h3>
+                <button onclick="closeACARSModal()" style="background: #4f0f0f; color: #ff6666; border: 1px solid #ff6666; padding: 5px 15px; cursor: pointer; font-family: 'Courier New', monospace;">Close</button>
+            </div>
+            <div id="acarsMessageList" style="font-family: 'Courier New', monospace; font-size: 12px;">
+            </div>
         </div>
     </div>
 
@@ -842,18 +912,35 @@
             const freq = vdl2Data.freq ? (vdl2Data.freq / 1000000).toFixed(3) : 'N/A';
             const signalLevel = vdl2Data.sig_level?.toFixed(1) || 'N/A';
             
-            const acarsText = vdl2Data.acars?.msg_text || '';
-            const flight = vdl2Data.acars?.flight || '';
+            const acarsData = vdl2Data.acars || null;
+            const flight = acarsData?.flight || srcAddr;
+            const msgText = acarsData?.msg_text || '';
+            const tail = acarsData?.tail || '';
+            const msgType = acarsData?.msg_type || '';
             
-            let logMessage = `VDL2 ${freq}MHz (${signalLevel}dBm): ${srcAddr}→${dstAddr} [${frameType}] ${command}`;
-            if (flight) {
-                logMessage += ` ${flight}`;
-            }
-            if (acarsText) {
-                logMessage += ` - "${acarsText}"`;
+            const timestamp = new Date((vdl2Data.t?.sec || Date.now()/1000) * 1000).toLocaleTimeString();
+            
+            const log = document.getElementById('commsLog');
+            
+            let logHtml = '<div class="log-entry vdl2">';
+            logHtml += `<div class="vdl2-header">📡 VDL2 MESSAGE - ${flight}</div>`;
+            logHtml += `<div class="vdl2-meta">`;
+            logHtml += `Time: ${timestamp} | Freq: ${freq} MHz | Signal: ${signalLevel} dBm<br>`;
+            logHtml += `From: ${srcAddr} → To: ${dstAddr} | Frame: ${frameType} | Cmd: ${command}`;
+            if (tail) logHtml += ` | Tail: ${tail}`;
+            if (msgType) logHtml += ` | Type: ${msgType}`;
+            logHtml += `</div>`;
+            
+            if (msgText) {
+                logHtml += `<div class="vdl2-message">💬 Message: ${msgText}</div>`;
+            } else {
+                logHtml += `<div class="vdl2-message">📋 Control frame (no message text)</div>`;
             }
             
-            addLogEntry(logMessage, 'vdl2');
+            logHtml += '</div>';
+            
+            log.innerHTML += logHtml;
+            log.scrollTop = log.scrollHeight;
             
             if (srcAddr !== 'Unknown') {
                 correlateACARSWithAircraft(srcAddr, vdl2Data);
@@ -867,18 +954,41 @@
             
             Object.values(aircraft).forEach(ac => {
                 if (ac.hex && ac.hex.toUpperCase() === acarsAddr.toUpperCase()) {
-                    addLogEntry(`ACARS correlation: ${ac.flight || ac.hex} - VDL2 activity detected`, 'correlation');
+                    const flight = ac.flight || ac.hex;
+                    const msgText = vdl2Data.acars?.msg_text || 'control frame';
+                    
+                    addLogEntry(`✅ ACARS Correlation: ${flight} (${acarsAddr}) - "${msgText}"`, 'correlation');
                     
                     ac.hasACARSActivity = true;
                     ac.lastACARSTime = vdl2Data.t?.sec || Date.now()/1000;
                     ac.acarsMessageCount = (ac.acarsMessageCount || 0) + 1;
+                    ac.lastACARSMessage = msgText;
+                    
+                    // Store full message history
+                    if (!ac.acarsHistory) {
+                        ac.acarsHistory = [];
+                    }
+                    ac.acarsHistory.push({
+                        timestamp: vdl2Data.t?.sec || Date.now()/1000,
+                        msgText: msgText,
+                        freq: vdl2Data.freq,
+                        signalLevel: vdl2Data.sig_level,
+                        frameType: vdl2Data.avlc?.frame_type,
+                        tail: vdl2Data.acars?.tail,
+                        msgType: vdl2Data.acars?.msg_type
+                    });
+                    
+                    // Keep last 50 messages per aircraft
+                    if (ac.acarsHistory.length > 50) {
+                        ac.acarsHistory.shift();
+                    }
                     
                     correlationFound = true;
                 }
             });
             
             if (!correlationFound && acarsAddr !== 'Unknown') {
-                addLogEntry(`VDL2 from unknown aircraft: ${acarsAddr}`, 'vdl2');
+                addLogEntry(`🔍 VDL2 from unknown aircraft: ${acarsAddr}`, 'default');
             }
         }
 
@@ -896,7 +1006,7 @@
             newAircraftData.forEach(newAc => {
                 if (newAc.lat && newAc.lon && newAc.lat !== 0 && newAc.lon !== 0) {
                     if (!aircraft[newAc.hex]) {
-                        aircraft[newAc.hex] = { ...newAc, trail: [] };
+                        aircraft[newAc.hex] = { ...newAc, trail: [], acarsHistory: [] };
                         addLogEntry(`New aircraft detected: ${newAc.flight || newAc.hex} at ${newAc.lat.toFixed(4)}, ${newAc.lon.toFixed(4)}`);
                     } else {
                         const existingAc = aircraft[newAc.hex];
@@ -936,6 +1046,12 @@
                 if (hasRecentACARSActivity) {
                     row.className = 'acars-active';
                 }
+                
+                // Make row clickable
+                row.style.cursor = 'pointer';
+                row.onclick = function() {
+                    showACARSMessages(ac.hex);
+                };
                 
                 row.insertCell(0).textContent = ac.flight || 'Unknown';
                 row.insertCell(1).textContent = ac.hex || 'N/A';
@@ -1300,6 +1416,11 @@
                 'None detected';
             document.getElementById('detailACARSActivity').textContent = acarsActivity;
 
+            // Set hex for ACARS button
+            const acarsBtn = document.getElementById('viewACARSBtn');
+            acarsBtn.dataset.hex = ac.hex;
+            acarsBtn.style.display = ac.acarsMessageCount > 0 ? 'block' : 'none';
+
             aircraftDetailsBox.style.left = `${x + 10}px`;
             aircraftDetailsBox.style.top = `${y + 10}px`;
             aircraftDetailsBox.style.display = 'block';
@@ -1349,6 +1470,65 @@
                 log.scrollTop = log.scrollHeight;
             }
         });
+
+        function showACARSMessages(hex) {
+            const ac = aircraft[hex];
+            if (!ac) return;
+            
+            const modal = document.getElementById('acarsModal');
+            const messageList = document.getElementById('acarsMessageList');
+            const aircraftId = document.getElementById('modalAircraftId');
+            
+            aircraftId.textContent = `${ac.flight || ac.hex} (${ac.hex})`;
+            
+            if (!ac.acarsHistory || ac.acarsHistory.length === 0) {
+                messageList.innerHTML = '<div style="color: #aa8800; padding: 20px; text-align: center;">No ACARS messages recorded for this aircraft</div>';
+            } else {
+                let html = '';
+                const sortedMessages = [...ac.acarsHistory].reverse();
+                
+                sortedMessages.forEach((msg, idx) => {
+                    const time = new Date(msg.timestamp * 1000).toLocaleString();
+                    const freq = msg.freq ? (msg.freq / 1000000).toFixed(3) : 'N/A';
+                    const signal = msg.signalLevel?.toFixed(1) || 'N/A';
+                    
+                    html += '<div class="acars-msg-item">';
+                    html += `<div class="acars-msg-header">Message #${sortedMessages.length - idx}</div>`;
+                    html += `<div class="acars-msg-meta">`;
+                    html += `Time: ${time} | Freq: ${freq} MHz | Signal: ${signal} dBm`;
+                    if (msg.tail) html += ` | Tail: ${msg.tail}`;
+                    if (msg.msgType) html += ` | Type: ${msg.msgType}`;
+                    if (msg.frameType) html += ` | Frame: ${msg.frameType}`;
+                    html += `</div>`;
+                    html += `<div class="acars-msg-text">${msg.msgText || '(no message text)'}</div>`;
+                    html += '</div>';
+                });
+                
+                messageList.innerHTML = html;
+            }
+            
+            modal.style.display = 'block';
+        }
+
+        function closeACARSModal() {
+            document.getElementById('acarsModal').style.display = 'none';
+        }
+
+        // Close modal when clicking outside
+        document.addEventListener('click', function(event) {
+            const modal = document.getElementById('acarsModal');
+            if (event.target === modal) {
+                closeACARSModal();
+            }
+        });
+
+        // Close modal with Escape key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                closeACARSModal();
+            }
+        });
+
     </script>
 </body>
 </html>
