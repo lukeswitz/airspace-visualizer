@@ -164,9 +164,6 @@ def periodic_rebuild():
     while True:
         rebuild_index()
         time.sleep(15)
-    while True:
-        rebuild_index()
-        time.sleep(15)
 
 @app.route("/chat")
 def chat_endpoint():

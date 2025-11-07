@@ -32,6 +32,7 @@ TAIL_PID="${PID_DIR}/vdl_tail.pid"
 BRIDGE_PID="${PID_DIR}/bridge.pid"
 WEB_PID="${PID_DIR}/web8111.pid"
 OLLAMA_PID="${PID_DIR}/ollama.pid"
+OLLAMA_EXTERNAL_MARKER="${PID_DIR}/ollama.external"
 AI_SERVER_PID="${PID_DIR}/ai_server.pid"
 
 AIRCRAFT_JSON="/tmp/aircraft.json"
@@ -285,19 +286,20 @@ start_all() {
 
   # Start Ollama if not running
   echo "Checking Ollama status..."
+  rm -f "${OLLAMA_EXTERNAL_MARKER}"
+  
   if [[ -z "${OLLAMA_BIN}" ]]; then
     echo "⚠️  Ollama not found in PATH - AI features will be unavailable"
     echo "   Install with: curl -fsSL https://ollama.ai/install.sh | sh"
   else
-    # Check if Ollama is already running (system service or other instance)
     if curl -s http://localhost:11434/api/version &>/dev/null; then
       echo "✅ Ollama already running (external instance)"
+      touch "${OLLAMA_EXTERNAL_MARKER}"
     else
       echo "Starting Ollama server..."
       start_proc "${OLLAMA_BIN} serve" "${OLLAMA_PID}" "${LOG_DIR}/ollama.log"
       sleep 3
       
-      # Verify Ollama started
       if curl -s http://localhost:11434/api/version &>/dev/null; then
         echo "✅ Ollama server started successfully"
       else
@@ -308,9 +310,11 @@ start_all() {
 
   # Start AI server if available
   if [[ -f "${AI_SERVER}" ]]; then
+    pkill -9 -f "ai_server.py" 2>/dev/null || true
+    sleep 1
     echo "Starting AI server: ${PY_BIN} ${AI_SERVER}"
     start_proc "${PY_BIN} \"${AI_SERVER}\"" "${AI_SERVER_PID}" "${LOG_DIR}/ai_server.log"
-    sleep 0.5
+    sleep 1
   else
     echo "⚠️  AI server not found at ${AI_SERVER}"
   fi
@@ -343,19 +347,29 @@ stop_pid() {
 stop_all() {
   stop_pid "${WEB_PID}"
   stop_pid "${BRIDGE_PID}"
-  stop_pid "${AI_SERVER_PID}"
-  stop_pid "${OLLAMA_PID}"
+  if is_running "${AI_SERVER_PID}"; then
+    pkill -9 "$(cat "${AI_SERVER_PID}")" 2>/dev/null || true
+    rm -f "${AI_SERVER_PID}"
+  fi
+  pkill -9 -f "ai_server.py" 2>/dev/null || true
+  
+  if [[ ! -f "${OLLAMA_EXTERNAL_MARKER}" ]]; then
+    stop_pid "${OLLAMA_PID}"
+    pkill -f "ollama serve" 2>/dev/null || true
+  fi
+  rm -f "${OLLAMA_EXTERNAL_MARKER}"
+  
   stop_pid "${TAIL_PID}"
   stop_pid "${VDL2_PID}"
   stop_pid "${READSB_PID}"
-  # also gently kill by name if left
+  
   pkill -f "http.server 8111" 2>/dev/null || true
   pkill -f "visualizer_bridge.py" 2>/dev/null || true
   pkill -f "tail -F -n1 ${VDL2_NDJSON}" 2>/dev/null || true
   pkill -f dumpvdl2 2>/dev/null || true
   pkill -f readsb 2>/dev/null || true
-  pkill -f "ai_server.py" 2>/dev/null || true
-  pkill -f "ollama serve" 2>/dev/null || true
+  pkill -9 -f "ai_server.py" 2>/dev/null || true
+  
   echo "Stopped."
 }
 
@@ -374,7 +388,17 @@ status_all() {
   status_line "VDL2 tail->json" "${TAIL_PID}"
   status_line "Bridge (Flask)" "${BRIDGE_PID}"
   status_line "Web 127.0.0.1:8111" "${WEB_PID}"
-  status_line "Ollama (ML server)" "${OLLAMA_PID}"
+  
+  if [[ -f "${OLLAMA_EXTERNAL_MARKER}" ]]; then
+    if curl -s http://localhost:11434/api/version &>/dev/null; then
+      echo "[UP]  Ollama (ML server) external instance"
+    else
+      echo "[DOWN] Ollama (ML server) external instance not responding"
+    fi
+  else
+    status_line "Ollama (ML server)" "${OLLAMA_PID}"
+  fi
+  
   status_line "AI Server (Flask)" "${AI_SERVER_PID}"
   echo "Files:"
   echo "  ${AIRCRAFT_JSON} size=$(stat -c%s \"${AIRCRAFT_JSON}\" 2>/dev/null || stat -f%z \"${AIRCRAFT_JSON}\" 2>/dev/null || echo 0)"
