@@ -10,12 +10,14 @@ set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY_BRIDGE="${APP_DIR}/visualizer_bridge.py"
+AI_SERVER="${APP_DIR}/ai_server.py"
 
 READSB_BIN="$(command -v readsb || true)"
 DUMP1090_BIN="$(command -v dump1090 || true)"
 DUMP1090_FA_BIN="$(command -v dump1090-fa || true)"
 DUMP1090_MUT_BIN="$(command -v dump1090-mutability || true)"
 DUMPVDL2_BIN="$(command -v dumpvdl2 || true)"
+OLLAMA_BIN="$(command -v ollama || true)"
 PY_BIN="$(command -v python3 || command -v python || true)"
 
 LOG_DIR="${APP_DIR}/logs"
@@ -29,6 +31,8 @@ VDL2_PID="${PID_DIR}/dumpvdl2.pid"
 TAIL_PID="${PID_DIR}/vdl_tail.pid"
 BRIDGE_PID="${PID_DIR}/bridge.pid"
 WEB_PID="${PID_DIR}/web8111.pid"
+OLLAMA_PID="${PID_DIR}/ollama.pid"
+AI_SERVER_PID="${PID_DIR}/ai_server.pid"
 
 AIRCRAFT_JSON="/tmp/aircraft.json"
 VDL2_NDJSON="/tmp/vdl2.ndjson"
@@ -279,6 +283,38 @@ start_all() {
   echo $! >"${TAIL_PID}"
   sleep 0.2
 
+  # Start Ollama if not running
+  echo "Checking Ollama status..."
+  if [[ -z "${OLLAMA_BIN}" ]]; then
+    echo "⚠️  Ollama not found in PATH - AI features will be unavailable"
+    echo "   Install with: curl -fsSL https://ollama.ai/install.sh | sh"
+  else
+    # Check if Ollama is already running (system service or other instance)
+    if curl -s http://localhost:11434/api/version &>/dev/null; then
+      echo "✅ Ollama already running (external instance)"
+    else
+      echo "Starting Ollama server..."
+      start_proc "${OLLAMA_BIN} serve" "${OLLAMA_PID}" "${LOG_DIR}/ollama.log"
+      sleep 3
+      
+      # Verify Ollama started
+      if curl -s http://localhost:11434/api/version &>/dev/null; then
+        echo "✅ Ollama server started successfully"
+      else
+        echo "⚠️  Ollama failed to start - check ${LOG_DIR}/ollama.log"
+      fi
+    fi
+  fi
+
+  # Start AI server if available
+  if [[ -f "${AI_SERVER}" ]]; then
+    echo "Starting AI server: ${PY_BIN} ${AI_SERVER}"
+    start_proc "${PY_BIN} \"${AI_SERVER}\"" "${AI_SERVER_PID}" "${LOG_DIR}/ai_server.log"
+    sleep 0.5
+  else
+    echo "⚠️  AI server not found at ${AI_SERVER}"
+  fi
+
   # start bridge
   echo "Starting bridge: ${PY_BIN} ${PY_BRIDGE}"
   start_proc "${PY_BIN} \"${PY_BRIDGE}\"" "${BRIDGE_PID}" "${LOG_DIR}/bridge.log"
@@ -307,6 +343,8 @@ stop_pid() {
 stop_all() {
   stop_pid "${WEB_PID}"
   stop_pid "${BRIDGE_PID}"
+  stop_pid "${AI_SERVER_PID}"
+  stop_pid "${OLLAMA_PID}"
   stop_pid "${TAIL_PID}"
   stop_pid "${VDL2_PID}"
   stop_pid "${READSB_PID}"
@@ -316,6 +354,8 @@ stop_all() {
   pkill -f "tail -F -n1 ${VDL2_NDJSON}" 2>/dev/null || true
   pkill -f dumpvdl2 2>/dev/null || true
   pkill -f readsb 2>/dev/null || true
+  pkill -f "ai_server.py" 2>/dev/null || true
+  pkill -f "ollama serve" 2>/dev/null || true
   echo "Stopped."
 }
 
@@ -334,6 +374,8 @@ status_all() {
   status_line "VDL2 tail->json" "${TAIL_PID}"
   status_line "Bridge (Flask)" "${BRIDGE_PID}"
   status_line "Web 127.0.0.1:8111" "${WEB_PID}"
+  status_line "Ollama (ML server)" "${OLLAMA_PID}"
+  status_line "AI Server (Flask)" "${AI_SERVER_PID}"
   echo "Files:"
   echo "  ${AIRCRAFT_JSON} size=$(stat -c%s \"${AIRCRAFT_JSON}\" 2>/dev/null || stat -f%z \"${AIRCRAFT_JSON}\" 2>/dev/null || echo 0)"
   echo "  ${VDL2_JSON} size=$(stat -c%s \"${VDL2_JSON}\" 2>/dev/null || stat -f%z \"${VDL2_JSON}\" 2>/dev/null || echo 0)"
@@ -346,12 +388,16 @@ show_logs() {
   echo "vdl_tail:  ${LOG_DIR}/vdl_tail.log"
   echo "bridge:    ${LOG_DIR}/bridge.log"
   echo "web8111:   ${LOG_DIR}/web8111.log"
+  echo "ollama:    ${LOG_DIR}/ollama.log"
+  echo "ai_server: ${LOG_DIR}/ai_server.log"
   echo
   tail -n 50 "${LOG_DIR}/readsb.log" 2>/dev/null || true
   tail -n 50 "${LOG_DIR}/dumpvdl2.log" 2>/dev/null || true
   tail -n 50 "${LOG_DIR}/vdl_tail.log" 2>/dev/null || true
   tail -n 50 "${LOG_DIR}/bridge.log" 2>/dev/null || true
   tail -n 50 "${LOG_DIR}/web8111.log" 2>/dev/null || true
+  tail -n 50 "${LOG_DIR}/ollama.log" 2>/dev/null || true
+  tail -n 50 "${LOG_DIR}/ai_server.log" 2>/dev/null || true
 }
 
 case "${1:-}" in
