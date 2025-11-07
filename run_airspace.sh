@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run_airspace.sh — manage ADS-B + VDL2 ingest and bridge
+# run_airspace.sh — manage ADS-B + VDL2 ingest and bridge + web server
 # Usage:
 #   ./run_airspace.sh start
 #   ./run_airspace.sh stop
@@ -28,6 +28,7 @@ READSB_PID="${PID_DIR}/readsb.pid"
 VDL2_PID="${PID_DIR}/dumpvdl2.pid"
 TAIL_PID="${PID_DIR}/vdl_tail.pid"
 BRIDGE_PID="${PID_DIR}/bridge.pid"
+WEB_PID="${PID_DIR}/web8111.pid"
 
 AIRCRAFT_JSON="/tmp/aircraft.json"
 VDL2_NDJSON="/tmp/vdl2.ndjson"
@@ -113,6 +114,11 @@ start_all() {
   # start bridge
   echo "Starting bridge: ${PY_BIN} ${PY_BRIDGE}"
   start_proc "${PY_BIN} \"${PY_BRIDGE}\"" "${BRIDGE_PID}" "${LOG_DIR}/bridge.log"
+  sleep 0.2
+
+  # start web server
+  echo "Starting localhost web server on 127.0.0.1:8111"
+  start_proc "${PY_BIN} -m http.server 8111 --bind 127.0.0.1" "${WEB_PID}" "${LOG_DIR}/web8111.log"
 
   echo "Started."
   status_all
@@ -131,11 +137,13 @@ stop_pid() {
 }
 
 stop_all() {
+  stop_pid "${WEB_PID}"
   stop_pid "${BRIDGE_PID}"
   stop_pid "${TAIL_PID}"
   stop_pid "${VDL2_PID}"
   stop_pid "${READSB_PID}"
   # also gently kill by name if left
+  pkill -f "http.server 8111" 2>/dev/null || true
   pkill -f "visualizer_bridge.py" 2>/dev/null || true
   pkill -f "tail -F -n1 ${VDL2_NDJSON}" 2>/dev/null || true
   pkill -f dumpvdl2 2>/dev/null || true
@@ -157,6 +165,7 @@ status_all() {
   status_line "VDL2 (dumpvdl2)" "${VDL2_PID}"
   status_line "VDL2 tail->json" "${TAIL_PID}"
   status_line "Bridge (Flask)" "${BRIDGE_PID}"
+  status_line "Web 127.0.0.1:8111" "${WEB_PID}"
   echo "Files:"
   echo "  ${AIRCRAFT_JSON} size=$(stat -c%s \"${AIRCRAFT_JSON}\" 2>/dev/null || stat -f%z \"${AIRCRAFT_JSON}\" 2>/dev/null || echo 0)"
   echo "  ${VDL2_JSON} size=$(stat -c%s \"${VDL2_JSON}\" 2>/dev/null || stat -f%z \"${VDL2_JSON}\" 2>/dev/null || echo 0)"
@@ -168,11 +177,13 @@ show_logs() {
   echo "dumpvdl2:  ${LOG_DIR}/dumpvdl2.log"
   echo "vdl_tail:  ${LOG_DIR}/vdl_tail.log"
   echo "bridge:    ${LOG_DIR}/bridge.log"
+  echo "web8111:   ${LOG_DIR}/web8111.log"
   echo
   tail -n 50 "${LOG_DIR}/readsb.log" 2>/dev/null || true
   tail -n 50 "${LOG_DIR}/dumpvdl2.log" 2>/dev/null || true
   tail -n 50 "${LOG_DIR}/vdl_tail.log" 2>/dev/null || true
   tail -n 50 "${LOG_DIR}/bridge.log" 2>/dev/null || true
+  tail -n 50 "${LOG_DIR}/web8111.log" 2>/dev/null || true
 }
 
 case "${1:-}" in
