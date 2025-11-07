@@ -34,19 +34,156 @@ AIRCRAFT_JSON="/tmp/aircraft.json"
 VDL2_NDJSON="/tmp/vdl2.ndjson"
 VDL2_JSON="/tmp/vdl2.json"
 
-detect_rtlsdr_devices() {
-  rtl_test -t 2>&1 | grep -E "^\s+[0-9]+:" | while read -r line; do
-    echo "$line"
+select_sdr_devices() {
+  echo "=========================================="
+  echo "RTL-SDR Device Detection and Assignment"
+  echo "=========================================="
+  
+  local devices=()
+  local device_info=()
+  
+  # Detect all devices
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^[[:space:]]*([0-9]+): ]]; then
+      local idx="${BASH_REMATCH[1]}"
+      devices+=("$idx")
+      device_info+=("$line")
+    fi
+  done < <(rtl_test -t 2>&1)
+  
+  if [[ ${#devices[@]} -eq 0 ]]; then
+    echo "ERROR: No RTL-SDR devices found"
+    exit 1
+  fi
+  
+  echo ""
+  echo "Detected ${#devices[@]} RTL-SDR device(s):"
+  for info in "${device_info[@]}"; do
+    echo "  $info"
   done
-}
-
-find_device_by_serial() {
-  local serial="$1"
-  rtl_test -t 2>&1 | grep -B1 "SN: ${serial}" | grep -oP '^\s+\K[0-9]+(?=:)' | head -1
+  echo ""
+  
+  # Single device - ask which function
+  if [[ ${#devices[@]} -eq 1 ]]; then
+    echo "Only 1 device detected (index ${devices[0]})"
+    echo "Select mode:"
+    echo "  1) ADS-B only (1090 MHz)"
+    echo "  2) VDL2/ACARS only (136 MHz)"
+    echo "  3) Time-sliced (alternating ADS-B/VDL2)"
+    read -p "Choice [1-3]: " mode_choice
+    
+    case "$mode_choice" in
+      1)
+        ADSB_IDX="${devices[0]}"
+        VDL2_IDX=""
+        USE_TIMESLICE=false
+        echo "✓ Device ${ADSB_IDX} assigned to ADS-B"
+        ;;
+      2)
+        ADSB_IDX=""
+        VDL2_IDX="${devices[0]}"
+        USE_TIMESLICE=false
+        echo "✓ Device ${VDL2_IDX} assigned to VDL2/ACARS"
+        ;;
+      3)
+        ADSB_IDX="${devices[0]}"
+        VDL2_IDX="${devices[0]}"
+        USE_TIMESLICE=true
+        echo "✓ Device ${ADSB_IDX} assigned to time-sliced mode"
+        ;;
+      *)
+        echo "Invalid choice, defaulting to ADS-B only"
+        ADSB_IDX="${devices[0]}"
+        VDL2_IDX=""
+        USE_TIMESLICE=false
+        ;;
+    esac
+    return
+  fi
+  
+  # Multiple devices - assign individually
+  echo "Assign devices to functions:"
+  echo ""
+  
+  # Select ADS-B device
+  echo "Available devices:"
+  for i in "${!devices[@]}"; do
+    echo "  $((i+1))) ${device_info[$i]}"
+  done
+  echo "  s) Skip ADS-B (VDL2 only mode)"
+  read -p "Select device for ADS-B (1090 MHz) [1-${#devices[@]},s]: " adsb_choice
+  
+  if [[ "$adsb_choice" == "s" ]]; then
+    ADSB_IDX=""
+    echo "✓ ADS-B disabled"
+  elif [[ "$adsb_choice" =~ ^[0-9]+$ ]] && [[ "$adsb_choice" -ge 1 ]] && [[ "$adsb_choice" -le ${#devices[@]} ]]; then
+    ADSB_IDX="${devices[$((adsb_choice-1))]}"
+    echo "✓ Device ${ADSB_IDX} assigned to ADS-B"
+  else
+    echo "Invalid choice, using device ${devices[0]}"
+    ADSB_IDX="${devices[0]}"
+  fi
+  
+  echo ""
+  
+  # Select VDL2 device
+  echo "Available devices:"
+  for i in "${!devices[@]}"; do
+    local dev="${devices[$i]}"
+    if [[ "$dev" == "$ADSB_IDX" ]]; then
+      echo "  $((i+1))) ${device_info[$i]} [ALREADY ASSIGNED TO ADS-B]"
+    else
+      echo "  $((i+1))) ${device_info[$i]}"
+    fi
+  done
+  echo "  s) Skip VDL2 (ADS-B only mode)"
+  read -p "Select device for VDL2/ACARS (136 MHz) [1-${#devices[@]},s]: " vdl2_choice
+  
+  if [[ "$vdl2_choice" == "s" ]]; then
+    VDL2_IDX=""
+    USE_TIMESLICE=false
+    echo "✓ VDL2 disabled"
+  elif [[ "$vdl2_choice" =~ ^[0-9]+$ ]] && [[ "$vdl2_choice" -ge 1 ]] && [[ "$vdl2_choice" -le ${#devices[@]} ]]; then
+    VDL2_IDX="${devices[$((vdl2_choice-1))]}"
+    
+    # Check if same device
+    if [[ "$VDL2_IDX" == "$ADSB_IDX" ]] && [[ -n "$ADSB_IDX" ]]; then
+      echo "⚠️  Same device selected for both functions"
+      read -p "Enable time-slicing? [Y/n]: " timeslice_choice
+      if [[ "$timeslice_choice" =~ ^[Nn] ]]; then
+        USE_TIMESLICE=false
+        echo "✓ Device ${VDL2_IDX} assigned to VDL2 (will conflict with ADS-B)"
+      else
+        USE_TIMESLICE=true
+        echo "✓ Device ${VDL2_IDX} assigned to time-sliced mode"
+      fi
+    else
+      USE_TIMESLICE=false
+      echo "✓ Device ${VDL2_IDX} assigned to VDL2"
+    fi
+  else
+    echo "Invalid choice, using device ${devices[0]}"
+    VDL2_IDX="${devices[0]}"
+    USE_TIMESLICE=false
+  fi
+  
+  echo ""
+  echo "=========================================="
+  echo "Configuration Summary:"
+  echo "  ADS-B:        ${ADSB_IDX:-disabled}"
+  echo "  VDL2:         ${VDL2_IDX:-disabled}"
+  echo "  Time-sliced:  ${USE_TIMESLICE}"
+  echo "=========================================="
+  echo ""
 }
 
 adsb_cmd() {
-  local adsb_idx="1"
+  local adsb_idx="${ADSB_IDX:-1}"
+  
+  if [[ -z "$adsb_idx" ]]; then
+    echo ""
+    return
+  fi
   
   if [[ -n "${READSB_BIN}" ]]; then
     echo "${READSB_BIN} --device-type rtlsdr --device ${adsb_idx} --gain 49.6 --write-json /tmp --write-json-every 1"
@@ -62,7 +199,12 @@ adsb_cmd() {
 }
 
 vdl2_cmd() {
-  local vdl_idx="0"
+  local vdl_idx="${VDL2_IDX:-0}"
+  
+  if [[ -z "$vdl_idx" ]]; then
+    echo ""
+    return
+  fi
   
   if [[ -n "${DUMPVDL2_BIN}" ]]; then
     echo "${DUMPVDL2_BIN} --rtlsdr ${vdl_idx} --gain 49.6 136650000 136725000 136775000 136800000 136825000 136875000 136900000 136975000 --output decoded:json:file:path=${VDL2_NDJSON}"
@@ -85,22 +227,18 @@ start_proc() {
 }
 
 start_all() {
+  # Interactive device selection
+  select_sdr_devices
+  
   # sanity: tools
   local ADSB_CMD="$(adsb_cmd)"
   local VDL_CMD="$(vdl2_cmd)"
-  if [[ -z "${ADSB_CMD}" ]]; then
-    echo "Error: readsb/dump1090 not found in PATH." >&2
+  
+  if [[ -z "${ADSB_CMD}" ]] && [[ -z "${VDL_CMD}" ]]; then
+    echo "Error: No functions enabled or no SDR tools found." >&2
     exit 1
   fi
-  if [[ -z "${VDL_CMD}" ]]; then
-    echo "Error: dumpvdl2 not found in PATH." >&2
-    exit 1
-  fi
-  if [[ -z "${PY_BIN}" ]]; then
-    echo "Error: python3 not found." >&2
-    exit 1
-  fi
-
+  
   # stop leftovers
   stop_all >/dev/null 2>&1 || true
 
@@ -109,15 +247,30 @@ start_all() {
   : >"${VDL2_NDJSON}"
   : >"${VDL2_JSON}"
 
-  # start ADS-B
-  echo "Starting ADS-B: ${ADSB_CMD}"
-  start_proc "${ADSB_CMD}" "${READSB_PID}" "${LOG_DIR}/readsb.log"
-  sleep 0.5
+  # start ADS-B if enabled
+  if [[ -n "${ADSB_CMD}" ]] && [[ "${USE_TIMESLICE}" != "true" ]]; then
+    echo "Starting ADS-B: ${ADSB_CMD}"
+    start_proc "${ADSB_CMD}" "${READSB_PID}" "${LOG_DIR}/readsb.log"
+    sleep 0.5
+  fi
 
-  # start VDL2 (NDJSON)
-  echo "Starting VDL2: ${VDL_CMD}"
-  start_proc "${VDL_CMD}" "${VDL2_PID}" "${LOG_DIR}/dumpvdl2.log"
-  sleep 0.5
+  # start VDL2 if enabled (and not time-sliced)
+  if [[ -n "${VDL_CMD}" ]] && [[ "${USE_TIMESLICE}" != "true" ]]; then
+    echo "Starting VDL2: ${VDL_CMD}"
+    start_proc "${VDL_CMD}" "${VDL2_PID}" "${LOG_DIR}/dumpvdl2.log"
+    sleep 0.5
+  fi
+  
+  # start time-sliced mode if enabled
+  if [[ "${USE_TIMESLICE}" == "true" ]]; then
+    echo "Starting time-sliced mode on device ${ADSB_IDX}"
+    if [[ ! -f "${APP_DIR}/single_rtlsdr_scheduler.sh" ]]; then
+      echo "Error: single_rtlsdr_scheduler.sh not found"
+      exit 1
+    fi
+    start_proc "bash ${APP_DIR}/single_rtlsdr_scheduler.sh" "${READSB_PID}" "${LOG_DIR}/timeslice.log"
+    sleep 0.5
+  fi
 
   # keep last NDJSON line mirrored to single JSON file
   echo "Starting NDJSON follower -> ${VDL2_JSON}"
