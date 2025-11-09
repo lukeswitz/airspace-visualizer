@@ -905,11 +905,18 @@
         function processVDL2Message(vdl2Data) {
             vdl2MessageCount++;
             
+            // Detect if this is normalized ACARS (130-131 MHz) or real VDL2 (136 MHz)
+            const freq_hz = vdl2Data.freq || 0;
+            const freq_mhz = freq_hz / 1000000;
+            const isLegacyACARSFreq = freq_mhz >= 130 && freq_mhz < 132;
+            const isVDL2Freq = freq_mhz >= 136 && freq_mhz < 137;
+            const messageType = isLegacyACARSFreq ? 'ACARS' : 'VDL2';
+            
             const srcAddr = vdl2Data.avlc?.src?.addr || 'Unknown';
             const dstAddr = vdl2Data.avlc?.dst?.addr || 'Unknown';
             const frameType = vdl2Data.avlc?.frame_type || 'I';
             const command = vdl2Data.avlc?.cmd || 'Data';
-            const freq = vdl2Data.freq ? (vdl2Data.freq / 1000000).toFixed(3) : 'N/A';
+            const freq = freq_mhz.toFixed(3);
             const signalLevel = vdl2Data.sig_level?.toFixed(1) || 'N/A';
             
             const acarsData = vdl2Data.acars || null;
@@ -923,7 +930,7 @@
             const log = document.getElementById('commsLog');
             
             let logHtml = '<div class="log-entry vdl2">';
-            logHtml += `<div class="vdl2-header">📡 VDL2 MESSAGE - ${flight}</div>`;
+            logHtml += `<div class="vdl2-header">📡 ${messageType} MESSAGE - ${flight}</div>`;
             logHtml += `<div class="vdl2-meta">`;
             logHtml += `Time: ${timestamp} | Freq: ${freq} MHz | Signal: ${signalLevel} dBm<br>`;
             logHtml += `From: ${srcAddr} → To: ${dstAddr} | Frame: ${frameType} | Cmd: ${command}`;
@@ -952,8 +959,13 @@
         function correlateACARSWithAircraft(acarsAddr, vdl2Data) {
             let correlationFound = false;
             
+            const acarsFlight = vdl2Data.acars?.flight?.trim().toUpperCase();
+            
             Object.values(aircraft).forEach(ac => {
-                if (ac.hex && ac.hex.toUpperCase() === acarsAddr.toUpperCase()) {
+                const acFlight = ac.flight?.trim().toUpperCase();
+                
+                if ((ac.hex && ac.hex.toUpperCase() === acarsAddr.toUpperCase()) || 
+                    (acarsFlight && acFlight && acarsFlight === acFlight)) {
                     const flight = ac.flight || ac.hex;
                     const msgText = vdl2Data.acars?.msg_text || 'control frame';
                     

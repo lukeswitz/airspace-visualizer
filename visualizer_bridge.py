@@ -302,6 +302,129 @@ def vdl2_file_listener():
             
         time.sleep(1)  # Check file every second
 
+def acars_file_listener():
+    """Read Legacy ACARS data from acars.json file and normalize to VDL2 format"""
+    global recent_acars_messages, latest_vdl2_message
+    
+    acars_file = "/tmp/acars.json"
+    last_mtime = 0
+    processed_messages = set()
+    
+    print(f"✅ ACARS file listener started for {acars_file}")
+    
+    while True:
+        try:
+            if os.path.exists(acars_file):
+                current_mtime = os.path.getmtime(acars_file)
+                
+                if current_mtime != last_mtime:
+                    with open(acars_file, 'r') as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                                
+                            try:
+                                acars_data = json.loads(line)
+
+                                # Skip fragmented/incomplete messages
+                                # if acars_data.get('assstat') == 'out of sequence' or acars_data.get('end') == True:
+                                #     continue
+                                
+                                if 'timestamp' in acars_data or 'flight' in acars_data:
+                                    msg_id = f"{acars_data.get('timestamp', time.time())}_{acars_data.get('tail', acars_data.get('flight', 'unknown'))}"
+                                    
+                                    if msg_id not in processed_messages:
+                                        vdl2_normalized = normalize_acars_to_vdl2(acars_data)
+                                        
+                                        recent_acars_messages.append(vdl2_normalized)
+                                        latest_vdl2_message = vdl2_normalized
+                                        processed_messages.add(msg_id)
+                                        
+                                        if len(processed_messages) > 1000:
+                                            processed_messages.clear()
+                                        
+                                        flight = acars_data.get('flight', 'Unknown')
+                                        freq_mhz = acars_data.get('freq', 0)
+                                        msg_text = acars_data.get('text', '')
+                                        print(f"📻 ACARS FILE: {flight} on {freq_mhz:.3f}MHz - {msg_text}")
+                                        
+                            except json.JSONDecodeError:
+                                continue
+                    
+                    last_mtime = current_mtime
+            else:
+                if last_mtime != 0:
+                    print(f"⚠️ ACARS file not found: {acars_file}")
+                    last_mtime = 0
+                    
+        except Exception as e:
+            print(f"❌ ACARS file read error: {e}")
+            
+        time.sleep(1)
+
+def normalize_acars_to_vdl2(acars_data):
+    """Convert acarsdec format to VDL2 format for compatibility"""
+    
+    flight = acars_data.get('flight', 'UNKNOWN').strip()
+    tail = acars_data.get('tail', acars_data.get('reg', ''))
+    msg_text = acars_data.get('text', '')
+    label = acars_data.get('label', '')
+    timestamp = acars_data.get('timestamp', time.time())
+    freq_raw = acars_data.get('freq', 0)
+    freq = int(freq_raw * 1000000) if freq_raw < 1000 else int(freq_raw)
+    
+    if tail:
+        icao_hex = format(abs(hash(tail)) % 0xFFFFFF, '06X')
+    else:
+        icao_hex = format(abs(hash(flight)) % 0xFFFFFF, '06X')
+    
+    return {
+        "vdl2": {
+            "app": {
+                "name": "acarsdec_normalized",
+                "ver": "1.0.0"
+            },
+            "t": {
+                "sec": int(timestamp),
+                "usec": int((timestamp % 1) * 1000000)
+            },
+            "freq": freq,
+            "burst_len_octets": len(msg_text) + 10,
+            "hdr_bits_fixed": 0,
+            "octets_corrected_by_fec": 0,
+            "idx": 0,
+            "sig_level": acars_data.get('level', -20.0),
+            "noise_level": -45.0,
+            "freq_skew": 0.0,
+            "avlc": {
+                "src": {
+                    "addr": icao_hex,
+                    "type": "Aircraft",
+                    "status": "Airborne"
+                },
+                "dst": {
+                    "addr": "GROUND",
+                    "type": "Ground station"
+                },
+                "cr": "Command",
+                "frame_type": "I" if msg_text else "S",
+                "cmd": "Data",
+                "pf": True,
+                "rseq": 0
+            },
+            "acars": {
+                "msg_text": msg_text,
+                "flight": flight,
+                "tail": tail,
+                "msg_type": label or "DATA",
+                "mode": acars_data.get('mode', 'C'),
+                "block_id": acars_data.get('block_id', ''),
+                "msg_num": acars_data.get('msgno', '')
+            }
+        }
+    }
+
 # ADS-B HTTP Endpoints (Port 8080 - dump1090 compatible)
 @adsb_app.route('/tmp/aircraft.json')
 def get_aircraft():
@@ -435,6 +558,10 @@ def main():
     print("📻 Starting file listener for VDL2/ACARS data...")
     vdl2_thread = threading.Thread(target=vdl2_file_listener, daemon=True)
     vdl2_thread.start()
+
+    print("📡 Starting file listener for Legacy ACARS data...")
+    acars_thread = threading.Thread(target=acars_file_listener, daemon=True)
+    acars_thread.start()
     
     print("🌐 Starting HTTP servers...")
     
