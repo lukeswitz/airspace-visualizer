@@ -959,24 +959,50 @@
         function correlateACARSWithAircraft(acarsAddr, vdl2Data) {
             let correlationFound = false;
             
+            // Trim all identifiers consistently
             const acarsFlight = vdl2Data.acars?.flight?.trim().toUpperCase();
+            const acarsTail = vdl2Data.acars?.tail?.trim().toUpperCase();
+            const cleanAcarsAddr = acarsAddr?.trim().toUpperCase();
             
             Object.values(aircraft).forEach(ac => {
                 const acFlight = ac.flight?.trim().toUpperCase();
+                const acHex = ac.hex?.trim().toUpperCase();
                 
-                if ((ac.hex && ac.hex.toUpperCase() === acarsAddr.toUpperCase()) || 
-                    (acarsFlight && acFlight && acarsFlight === acFlight)) {
-                    const flight = ac.flight || ac.hex;
+                let matched = false;
+                let matchReason = '';
+                
+                // Primary: ICAO hex match
+                if (acHex && cleanAcarsAddr && acHex === cleanAcarsAddr) {
+                    matched = true;
+                    matchReason = 'ICAO hex';
+                }
+                // Secondary: Flight number match
+                else if (acarsFlight && acFlight && acarsFlight === acFlight) {
+                    matched = true;
+                    matchReason = 'flight number';
+                }
+                // Tertiary: Tail matches flight callsign
+                else if (acarsTail && acFlight && acarsTail === acFlight) {
+                    matched = true;
+                    matchReason = 'tail number';
+                }
+                // Quaternary: Address field matches flight
+                else if (cleanAcarsAddr && acFlight && cleanAcarsAddr === acFlight) {
+                    matched = true;
+                    matchReason = 'addr=flight';
+                }
+                
+                if (matched) {
+                    const flight = ac.flight?.trim() || ac.hex;
                     const msgText = vdl2Data.acars?.msg_text || 'control frame';
                     
-                    addLogEntry(`✅ ACARS Correlation: ${flight} (${acarsAddr}) - "${msgText}"`, 'correlation');
+                    addLogEntry(`✅ ACARS Correlation [${matchReason}]: ${flight} (${acHex}) - "${msgText}"`, 'correlation');
                     
                     ac.hasACARSActivity = true;
                     ac.lastACARSTime = vdl2Data.t?.sec || Date.now()/1000;
                     ac.acarsMessageCount = (ac.acarsMessageCount || 0) + 1;
                     ac.lastACARSMessage = msgText;
                     
-                    // Store full message history
                     if (!ac.acarsHistory) {
                         ac.acarsHistory = [];
                     }
@@ -986,11 +1012,11 @@
                         freq: vdl2Data.freq,
                         signalLevel: vdl2Data.sig_level,
                         frameType: vdl2Data.avlc?.frame_type,
-                        tail: vdl2Data.acars?.tail,
-                        msgType: vdl2Data.acars?.msg_type
+                        tail: acarsTail,
+                        msgType: vdl2Data.acars?.msg_type,
+                        matchReason: matchReason
                     });
                     
-                    // Keep last 50 messages per aircraft
                     if (ac.acarsHistory.length > 50) {
                         ac.acarsHistory.shift();
                     }
@@ -999,8 +1025,9 @@
                 }
             });
             
-            if (!correlationFound && acarsAddr !== 'Unknown') {
-                addLogEntry(`🔍 VDL2 from unknown aircraft: ${acarsAddr}`, 'default');
+            if (!correlationFound) {
+                const displayAddr = acarsTail || acarsFlight || cleanAcarsAddr || 'Unknown';
+                addLogEntry(`🔍 VDL2 from unmatched source: ${displayAddr}`, 'default');
             }
         }
 

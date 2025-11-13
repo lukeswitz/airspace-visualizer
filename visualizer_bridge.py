@@ -366,18 +366,16 @@ def acars_file_listener():
 def normalize_acars_to_vdl2(acars_data):
     """Convert acarsdec format to VDL2 format for compatibility"""
     
-    flight = acars_data.get('flight', 'UNKNOWN').strip()
-    tail = acars_data.get('tail', acars_data.get('reg', ''))
+    flight = acars_data.get('flight', '').strip().upper()
+    tail = acars_data.get('tail', acars_data.get('reg', '')).strip().upper()
     msg_text = acars_data.get('text', '')
     label = acars_data.get('label', '')
     timestamp = acars_data.get('timestamp', time.time())
     freq_raw = acars_data.get('freq', 0)
     freq = int(freq_raw * 1000000) if freq_raw < 1000 else int(freq_raw)
     
-    if tail:
-        icao_hex = format(abs(hash(tail)) % 0xFFFFFF, '06X')
-    else:
-        icao_hex = format(abs(hash(flight)) % 0xFFFFFF, '06X')
+    # Use tail directly - frontend will match it against ADS-B flight callsigns
+    addr = tail or flight or "UNKNOWN"
     
     return {
         "vdl2": {
@@ -399,7 +397,7 @@ def normalize_acars_to_vdl2(acars_data):
             "freq_skew": 0.0,
             "avlc": {
                 "src": {
-                    "addr": icao_hex,
+                    "addr": addr,
                     "type": "Aircraft",
                     "status": "Airborne"
                 },
@@ -415,8 +413,8 @@ def normalize_acars_to_vdl2(acars_data):
             },
             "acars": {
                 "msg_text": msg_text,
-                "flight": flight,
-                "tail": tail,
+                "flight": flight or None,
+                "tail": tail or None,
                 "msg_type": label or "DATA",
                 "mode": acars_data.get('mode', 'C'),
                 "block_id": acars_data.get('block_id', ''),
