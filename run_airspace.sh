@@ -551,7 +551,7 @@ status_line() {
 status_all() {
   status_line "ADS-B (readsb/dump1090)" "${READSB_PID}"
   
-  if [[ "${USE_ACARS_TIMESLICE}" == "true" ]]; then
+  if [[ "${USE_ACARS_TIMESLICE:-false}" == "true" ]]; then
     status_line "ACARS Scheduler (VDL2+Legacy)" "${ACARS_PID}"
   else
     status_line "VDL2 (dumpvdl2)" "${VDL2_PID}"
@@ -577,7 +577,6 @@ status_all() {
   echo "  ${AIRCRAFT_JSON} size=$(stat -c%s \"${AIRCRAFT_JSON}\" 2>/dev/null || stat -f%z \"${AIRCRAFT_JSON}\" 2>/dev/null || echo 0)"
   echo "  ${VDL2_JSON} size=$(stat -c%s \"${VDL2_JSON}\" 2>/dev/null || stat -f%z \"${VDL2_JSON}\" 2>/dev/null || echo 0)"
 }
-
 
 show_logs() {
   echo "Logs in ${LOG_DIR}"

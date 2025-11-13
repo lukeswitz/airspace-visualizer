@@ -41,6 +41,7 @@ def acars_after_request(response):
 latest_aircraft_data = {"now": time.time(), "aircraft": []}
 recent_acars_messages = deque(maxlen=100)
 latest_vdl2_message = None
+latest_acars_message = None
 
 def generate_coastline_data(center_lat, center_lon, range_nm):
     """Generate simplified coastline data for the Gulf Coast region"""
@@ -339,6 +340,7 @@ def acars_file_listener():
                                         
                                         recent_acars_messages.append(vdl2_normalized)
                                         latest_vdl2_message = vdl2_normalized
+                                        latest_acars_message = vdl2_normalized
                                         processed_messages.add(msg_id)
                                         
                                         if len(processed_messages) > 1000:
@@ -466,11 +468,19 @@ def get_adsb_status():
 # ACARS/VDL2 HTTP Endpoints (Port 8081 - dumpvdl2 compatible)
 @acars_app.route('/tmp/vdl2.json')
 def get_vdl2():
-    """Serve latest VDL2 message (dumpvdl2 compatible)"""
+    """Serve latest ACARS message if available, else VDL2 control frame"""
     try:
+        # Prioritize ACARS messages (with actual content)
+        if latest_acars_message:
+            return jsonify(latest_acars_message)
+        
+        # Fallback to any VDL2
+        if latest_vdl2_message:
+            return jsonify(latest_vdl2_message)
+        
+        # Fallback to file
         vdl2_file_path = '/tmp/vdl2.json'
         if os.path.exists(vdl2_file_path):
-            # dumpvdl2 writes NDJSON (one JSON object per line). Read last non-empty line.
             last = None
             with open(vdl2_file_path, 'r') as f:
                 for line in f:
@@ -484,17 +494,13 @@ def get_vdl2():
                         return jsonify(file_data)
                 except json.JSONDecodeError:
                     pass
-                    
-        # Fall back to in-memory message
-        if latest_vdl2_message:
-            return jsonify(latest_vdl2_message)
-        else:
-            return jsonify({
-                "vdl2": {
-                    "app": {"name": "simulated_dumpvdl2", "ver": "2.3.0"},
-                    "status": "no_messages"
-                }
-            })
+        
+        return jsonify({
+            "vdl2": {
+                "app": {"name": "simulated_dumpvdl2", "ver": "2.3.0"},
+                "status": "no_messages"
+            }
+        })
     except Exception as e:
         print(f"❌ Error serving VDL2 data: {e}")
         return jsonify({
